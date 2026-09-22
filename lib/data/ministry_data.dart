@@ -169,7 +169,10 @@ const demoRecyclers = <RecyclerRecord>[
       'magnets': 128
     },
     pickupAvailability: true,
-    serviceArea: 'Pune urban area',
+    serviceArea: 'Mumbai Metropolitan Region',
+    completedTransactions: 312,
+    priceConsistencyScore: 94.5,
+    paymentCompletionScore: 100.0,
   ),
   RecyclerRecord(
     recyclerId: 'DEMO-R-002',
@@ -202,7 +205,10 @@ const demoRecyclers = <RecyclerRecord>[
     contact: '+91 00000 00003',
     offeredRates: {'battery': 108, 'crt': 24, 'lcd': 135},
     pickupAvailability: true,
-    serviceArea: 'Pune district',
+    serviceArea: 'Nashik District',
+    completedTransactions: 84,
+    priceConsistencyScore: 88.0,
+    paymentCompletionScore: 95.5,
   ),
 ];
 

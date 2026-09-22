@@ -4,7 +4,13 @@ import 'ministry_controller.dart';
 import 'screens/collection_workflow.dart';
 import 'screens/dashboard_reference.dart';
 import 'screens/traceability_workflow.dart';
-import 'widgets/common.dart';
+import 'services/workflow_services.dart';
+import 'services/dataset_service.dart';
+import 'widgets/common.dart' hide LabelValue;
+import 'widgets/ministry_components.dart';
+import 'screens/unit_economics.dart';
+import 'screens/qr_scanner_screen.dart';
+import 'models/workflow_models.dart';
 
 class MinistryApp extends StatefulWidget {
   const MinistryApp({super.key, this.controller});
@@ -137,7 +143,9 @@ class _AppShell extends StatelessWidget {
     final onboarding = controller.screen == WorkflowScreen.onboarding;
     final child = switch (controller.screen) {
       WorkflowScreen.onboarding => OnboardingScreen(controller: controller),
-      WorkflowScreen.home => HomeDashboard(controller: controller),
+      WorkflowScreen.home => controller.userRole == UserRole.recycler
+          ? RecyclerDashboardV2(controller: controller)
+          : HomeDashboard(controller: controller),
       WorkflowScreen.collectionMode =>
         CollectionModeScreen(controller: controller),
       WorkflowScreen.capture => CaptureBatchScreen(controller: controller),
@@ -153,6 +161,16 @@ class _AppShell extends StatelessWidget {
       WorkflowScreen.sync => SyncScreenV2(controller: controller),
       WorkflowScreen.recyclerDashboard =>
         RecyclerDashboardV2(controller: controller),
+      WorkflowScreen.makeOffer =>
+        MakeOfferScreenV2(controller: controller),
+      WorkflowScreen.schemes =>
+        SchemesScreen(controller: controller),
+      WorkflowScreen.aggregateLots =>
+        AggregateLotsScreen(controller: controller),
+      WorkflowScreen.unitEconomics =>
+        UnitEconomicsScreen(controller: controller),
+      WorkflowScreen.scanQR =>
+        QRScannerScreen(controller: controller),
     };
     return PopScope(
       canPop: onboarding || controller.screen == WorkflowScreen.home,
@@ -326,6 +344,46 @@ class _HomeBottomNavigation extends StatelessWidget {
                 'hi' => 'हिन्दी',
                 _ => 'English',
               },
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  controller.go(WorkflowScreen.unitEconomics);
+                },
+                icon: const Icon(Icons.show_chart_rounded),
+                label: const Text('View Unit Economics', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  final data = DatasetService.generateDatasets(controller.lots);
+                  // In a real app this would save to a file or share it. 
+                  // For the demo we just print it to show it works.
+                  print('Datasets Generated: ${data.keys.join(', ')}');
+                  ScaffoldMessenger.of(sheetContext).showSnackBar(const SnackBar(content: Text('Datasets logged to console.')));
+                },
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('Export Datasets (Demo)', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  controller.resetDemo();
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Demo state reset. Offline mode active.')));
+                },
+                icon: const Icon(Icons.restart_alt_rounded),
+                label: const Text('Reset Demo State', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
             ),
             const SizedBox(height: 20),
             SizedBox(

@@ -143,8 +143,15 @@ class RecyclerMatchScreenV2 extends StatelessWidget {
                       Text(
                           '${match.recycler.facilityLocation} • ${match.recycler.serviceArea}',
                           style: const TextStyle(color: textMuted)),
-                      Text('Contact: ${match.recycler.contact}',
-                          style: const TextStyle(color: textMuted)),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _MetricChip(icon: Icons.verified_rounded, label: '${match.recycler.completedTransactions} lots'),
+                          _MetricChip(icon: Icons.price_check_rounded, label: '${match.recycler.priceConsistencyScore}% price'),
+                          _MetricChip(icon: Icons.payments_rounded, label: '${match.recycler.paymentCompletionScore}% paid'),
+                        ],
+                      ),
                       const SizedBox(height: 10),
                       Row(children: [
                         Expanded(
@@ -450,7 +457,10 @@ class LedgerScreenV2 extends StatelessWidget {
   final MinistryController controller;
 
   @override
-  Widget build(BuildContext context) => ListView(
+  Widget build(BuildContext context) {
+    final pendingLots = controller.lots.where((l) => l.paymentStatus == PaymentStatus.pending && l.status == LotStatus.received).toList();
+    
+    return ListView(
         padding: const EdgeInsets.all(16),
         children: [
           PageHeading(controller.t('earnings'),
@@ -481,6 +491,14 @@ class LedgerScreenV2 extends StatelessWidget {
               controller.setLedgerFilter(selected.first);
             },
           ),
+          if (controller.userRole == UserRole.aggregator && pendingLots.length > 1) ...[
+            const SizedBox(height: 12),
+            PrimaryButton(
+              label: 'Consolidate ${pendingLots.length} Pending Lots',
+              icon: Icons.call_merge_rounded,
+              onPressed: () => controller.go(WorkflowScreen.aggregateLots),
+            ),
+          ],
           const SizedBox(height: 12),
           if (controller.filteredLots.isEmpty)
             const EmptyState(
@@ -512,12 +530,16 @@ class LedgerScreenV2 extends StatelessWidget {
                                       ? primary
                                       : warning,
                                   fontWeight: FontWeight.w800)),
+                          Text(statusLabel(lot.status),
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w700)),
                         ]),
                   ),
                 ),
               )),
         ],
       );
+  }
 }
 
 class SyncScreenV2 extends StatelessWidget {
@@ -638,10 +660,192 @@ class RecyclerDashboardV2 extends StatelessWidget {
           )),
       const SizedBox(height: 8),
       OutlinedButton.icon(
-          onPressed: () => unsupported(context,
-              'QR scanning needs camera scanner integration. Lot ID entry is represented by the incoming list.'),
+          onPressed: () => controller.go(WorkflowScreen.scanQR),
           icon: const Icon(Icons.qr_code_scanner_rounded),
-          label: const Text('Scan / enter QR')),
+          label: const Text('Scan Incoming Lot QR')),
+      if (completed.isNotEmpty) ...[
+        const SizedBox(height: 24),
+        const Text('Completed / In Facility',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 8),
+        ...completed.map((lot) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(lot.lotId,
+                              style: const TextStyle(fontWeight: FontWeight.w900)),
+                          _MetricChip(icon: Icons.inventory_rounded, label: lot.status.name),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text('${lot.totalWeightKg.toStringAsFixed(2)} kg received',
+                          style: const TextStyle(color: textMuted)),
+                      const SizedBox(height: 12),
+                      if (lot.status == LotStatus.completed)
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => controller.processLot(lot.lotId),
+                            icon: const Icon(Icons.recycling_rounded),
+                            label: const Text('Mark Processed'),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            )),
+      ],
     ]);
+  }
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({required this.icon, required this.label});
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F2F5),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 12, color: const Color(0xFF5E6A75)),
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(fontSize: 10, color: Color(0xFF5E6A75), fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+}
+
+class AggregateLotsScreen extends StatelessWidget {
+  const AggregateLotsScreen({required this.controller, super.key});
+  final MinistryController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final pendingLots = controller.lots.where((l) => l.paymentStatus == PaymentStatus.pending && l.status == LotStatus.received).toList();
+    if (pendingLots.isEmpty) {
+      return const EmptyState(icon: Icons.error_outline_rounded, text: 'No lots available to consolidate.');
+    }
+    
+    // Calculate total materials and weights
+    final materialMap = <String, double>{};
+    for (final lot in pendingLots) {
+      for (final item in lot.materials) {
+        materialMap[item.materialId] = (materialMap[item.materialId] ?? 0) + item.weightKg;
+      }
+    }
+    final totalWeight = materialMap.values.fold<double>(0, (sum, weight) => sum + weight);
+
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      PageHeading('Consolidate Lots', 'Combine ${pendingLots.length} pending lots into a single large batch for downstream processing.'),
+      const SizedBox(height: 12),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Source Lots', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+              const SizedBox(height: 8),
+              ...pendingLots.map((l) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(l.lotId, style: const TextStyle(fontFamily: 'monospace')),
+                    Text('${l.totalWeightKg.toStringAsFixed(2)} kg'),
+                  ],
+                ),
+              )),
+              const Divider(height: 24),
+              const Text('Consolidated Batch', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+              const SizedBox(height: 8),
+              ...materialMap.entries.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(materialCatalog[e.key]!.name(controller.language)),
+                    Text('${e.value.toStringAsFixed(2)} kg', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              )),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Total Weight', style: TextStyle(fontWeight: FontWeight.w900)),
+                  Text('${totalWeight.toStringAsFixed(2)} kg', style: const TextStyle(color: primary, fontWeight: FontWeight.w900)),
+                ],
+              ),
+            ]
+          ),
+        )
+      ),
+      const SizedBox(height: 16),
+      PrimaryButton(
+        label: 'Confirm Consolidation',
+        icon: Icons.check_circle_rounded,
+        onPressed: () => controller.aggregateLots(pendingLots.map((l) => l.lotId).toList()),
+      ),
+    ]);
+  }
+}
+
+class MakeOfferScreenV2 extends StatefulWidget {
+  const MakeOfferScreenV2({required this.controller, super.key});
+  final MinistryController controller;
+
+  @override
+  State<MakeOfferScreenV2> createState() => _MakeOfferScreenV2State();
+}
+
+class _MakeOfferScreenV2State extends State<MakeOfferScreenV2> {
+  double? _offerPrice;
+
+  @override
+  Widget build(BuildContext context) {
+    // We access the lot via ID because selectedLot getter is removed.
+    final lotId = widget.controller.selectedLotId;
+    final lot = lotId != null ? widget.controller.lots.where((l) => l.lotId == lotId).firstOrNull : null;
+    if (lot == null) return const Center(child: Text('Lot unavailable'));
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const PageHeading('Make Offer', 'Submit a custom offer for this lot'),
+        const SizedBox(height: 16),
+        TextFormField(
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'Offer Price per kg (₹)', border: OutlineInputBorder()),
+          onChanged: (v) => setState(() => _offerPrice = double.tryParse(v)),
+        ),
+        const SizedBox(height: 24),
+        PrimaryButton(
+          label: 'Submit Offer',
+          icon: Icons.check_circle_rounded,
+          onPressed: _offerPrice != null
+              ? () {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Offer submitted')));
+                  widget.controller.go(WorkflowScreen.recyclerDashboard);
+                }
+              : null,
+        ),
+      ],
+    );
   }
 }

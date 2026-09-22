@@ -16,6 +16,9 @@ enum LotStatus {
   completed,
   rejected,
   disputed,
+  sorted,
+  processed,
+  recoveredDownstream,
 }
 
 enum PaymentMethod { cash, upi }
@@ -29,24 +32,29 @@ String enumName(Enum value) => value.name;
 T enumByName<T extends Enum>(List<T> values, Object? value, T fallback) =>
     values.where((item) => item.name == value).firstOrNull ?? fallback;
 
+enum UserRole { collector, aggregator, recycler }
+
 class CollectorProfile {
   const CollectorProfile({
     required this.collectorId,
     required this.language,
     required this.operatingLocation,
     this.collectorName = '',
+    this.role = UserRole.collector,
   });
 
   final String collectorId;
   final String collectorName;
   final String language;
   final String operatingLocation;
+  final UserRole role;
 
   Map<String, dynamic> toJson() => {
         'collectorId': collectorId,
         'collectorName': collectorName,
         'language': language,
         'operatingLocation': operatingLocation,
+        'role': role.name,
       };
 
   factory CollectorProfile.fromJson(Map<String, dynamic> json) =>
@@ -55,6 +63,40 @@ class CollectorProfile {
         collectorName: json['collectorName']?.toString() ?? '',
         language: json['language']?.toString() ?? 'mr',
         operatingLocation: json['operatingLocation']?.toString() ?? '',
+        role: enumByName(UserRole.values, json['role'], UserRole.collector),
+      );
+}
+
+class RecyclerProfile {
+  const RecyclerProfile({
+    required this.recyclerId,
+    required this.facilityName,
+    required this.facilityLocation,
+    required this.authorizationNumber,
+    required this.materialsAccepted,
+  });
+
+  final String recyclerId;
+  final String facilityName;
+  final String facilityLocation;
+  final String authorizationNumber;
+  final List<String> materialsAccepted;
+
+  Map<String, dynamic> toJson() => {
+        'recyclerId': recyclerId,
+        'facilityName': facilityName,
+        'facilityLocation': facilityLocation,
+        'authorizationNumber': authorizationNumber,
+        'materialsAccepted': materialsAccepted,
+      };
+
+  factory RecyclerProfile.fromJson(Map<String, dynamic> json) =>
+      RecyclerProfile(
+        recyclerId: json['recyclerId']?.toString() ?? '',
+        facilityName: json['facilityName']?.toString() ?? '',
+        facilityLocation: json['facilityLocation']?.toString() ?? '',
+        authorizationNumber: json['authorizationNumber']?.toString() ?? '',
+        materialsAccepted: List<String>.from(json['materialsAccepted'] ?? []),
       );
 }
 
@@ -239,6 +281,10 @@ class DigitalLot {
     required this.recyclerConfirmed,
     required this.statusHistory,
     this.lastSyncError = '',
+    this.offers = const [],
+    this.agreement,
+    this.agreedPrice,
+    this.sourceLotIds,
   });
 
   final String lotId;
@@ -262,6 +308,10 @@ class DigitalLot {
   final bool recyclerConfirmed;
   final List<StatusEvent> statusHistory;
   final String lastSyncError;
+  final List<RecyclerOffer> offers;
+  final DigitalAgreement? agreement;
+  final double? agreedPrice;
+  final List<String>? sourceLotIds;
 
   double get totalWeightKg =>
       materials.fold(0, (sum, material) => sum + material.weightKg);
@@ -285,6 +335,10 @@ class DigitalLot {
     bool? recyclerConfirmed,
     List<StatusEvent>? statusHistory,
     String? lastSyncError,
+    List<RecyclerOffer>? offers,
+    DigitalAgreement? agreement,
+    double? agreedPrice,
+    List<String>? sourceLotIds,
   }) =>
       DigitalLot(
         lotId: lotId,
@@ -308,6 +362,10 @@ class DigitalLot {
         recyclerConfirmed: recyclerConfirmed ?? this.recyclerConfirmed,
         statusHistory: statusHistory ?? this.statusHistory,
         lastSyncError: lastSyncError ?? this.lastSyncError,
+        offers: offers ?? this.offers,
+        agreement: agreement ?? this.agreement,
+        agreedPrice: agreedPrice ?? this.agreedPrice,
+        sourceLotIds: sourceLotIds ?? this.sourceLotIds,
       );
 
   Map<String, dynamic> toJson() => {
@@ -332,6 +390,10 @@ class DigitalLot {
         'recyclerConfirmed': recyclerConfirmed,
         'statusHistory': statusHistory.map((event) => event.toJson()).toList(),
         'lastSyncError': lastSyncError,
+        'offers': offers.map((offer) => offer.toJson()).toList(),
+        'agreement': agreement?.toJson(),
+        'agreedPrice': agreedPrice,
+        'sourceLotIds': sourceLotIds,
       };
 
   factory DigitalLot.fromJson(Map<String, dynamic> json) => DigitalLot(
@@ -370,6 +432,15 @@ class DigitalLot {
             .map(StatusEvent.fromJson)
             .toList(),
         lastSyncError: json['lastSyncError']?.toString() ?? '',
+        offers: (json['offers'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(RecyclerOffer.fromJson)
+            .toList(),
+        agreement: json['agreement'] != null
+            ? DigitalAgreement.fromJson(json['agreement'] as Map<String, dynamic>)
+            : null,
+        agreedPrice: (json['agreedPrice'] as num?)?.toDouble(),
+        sourceLotIds: (json['sourceLotIds'] as List?)?.cast<String>(),
       );
 
   String toQrJson() => jsonEncode({
@@ -448,6 +519,9 @@ class RecyclerRecord {
     required this.offeredRates,
     required this.pickupAvailability,
     required this.serviceArea,
+    this.completedTransactions = 0,
+    this.priceConsistencyScore = 0.0,
+    this.paymentCompletionScore = 0.0,
   });
 
   final String recyclerId;
@@ -462,6 +536,9 @@ class RecyclerRecord {
   final Map<String, double> offeredRates;
   final bool pickupAvailability;
   final String serviceArea;
+  final int completedTransactions;
+  final double priceConsistencyScore;
+  final double paymentCompletionScore;
 }
 
 class SyncSummary {
@@ -476,4 +553,84 @@ class SyncSummary {
   final int pending;
   final int failed;
   final DateTime? lastSynced;
+}
+
+class RecyclerOffer {
+  const RecyclerOffer({
+    required this.recyclerId,
+    required this.recyclerName,
+    required this.offeredRate,
+    required this.distanceKm,
+    required this.pickupAvailable,
+    required this.authorizationStatus,
+  });
+
+  final String recyclerId;
+  final String recyclerName;
+  final double offeredRate;
+  final double distanceKm;
+  final bool pickupAvailable;
+  final String authorizationStatus;
+
+  Map<String, dynamic> toJson() => {
+        'recyclerId': recyclerId,
+        'recyclerName': recyclerName,
+        'offeredRate': offeredRate,
+        'distanceKm': distanceKm,
+        'pickupAvailable': pickupAvailable,
+        'authorizationStatus': authorizationStatus,
+      };
+
+  factory RecyclerOffer.fromJson(Map<String, dynamic> json) => RecyclerOffer(
+        recyclerId: json['recyclerId']?.toString() ?? '',
+        recyclerName: json['recyclerName']?.toString() ?? '',
+        offeredRate: (json['offeredRate'] as num?)?.toDouble() ?? 0.0,
+        distanceKm: (json['distanceKm'] as num?)?.toDouble() ?? 0.0,
+        pickupAvailable: json['pickupAvailable'] == true,
+        authorizationStatus: json['authorizationStatus']?.toString() ?? 'Unverified',
+      );
+}
+
+class DigitalAgreement {
+  const DigitalAgreement({
+    required this.lotId,
+    required this.recyclerId,
+    required this.agreedRate,
+    required this.paymentMethod,
+    required this.handoverMethod,
+    required this.lockedAt,
+    this.collectorAccepted = false,
+    this.recyclerAccepted = false,
+  });
+
+  final String lotId;
+  final String recyclerId;
+  final double agreedRate;
+  final PaymentMethod paymentMethod;
+  final String handoverMethod;
+  final DateTime lockedAt;
+  final bool collectorAccepted;
+  final bool recyclerAccepted;
+
+  Map<String, dynamic> toJson() => {
+        'lotId': lotId,
+        'recyclerId': recyclerId,
+        'agreedRate': agreedRate,
+        'paymentMethod': paymentMethod.name,
+        'handoverMethod': handoverMethod,
+        'lockedAt': lockedAt.toIso8601String(),
+        'collectorAccepted': collectorAccepted,
+        'recyclerAccepted': recyclerAccepted,
+      };
+
+  factory DigitalAgreement.fromJson(Map<String, dynamic> json) => DigitalAgreement(
+        lotId: json['lotId']?.toString() ?? '',
+        recyclerId: json['recyclerId']?.toString() ?? '',
+        agreedRate: (json['agreedRate'] as num?)?.toDouble() ?? 0.0,
+        paymentMethod: enumByName(PaymentMethod.values, json['paymentMethod'], PaymentMethod.cash),
+        handoverMethod: json['handoverMethod']?.toString() ?? 'Drop-off',
+        lockedAt: DateTime.tryParse(json['lockedAt']?.toString() ?? '') ?? DateTime.now(),
+        collectorAccepted: json['collectorAccepted'] == true,
+        recyclerAccepted: json['recyclerAccepted'] == true,
+      );
 }

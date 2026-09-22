@@ -7,6 +7,8 @@ import '../models/workflow_models.dart';
 abstract interface class LocalRepository {
   Future<CollectorProfile?> loadProfile();
   Future<void> saveProfile(CollectorProfile profile);
+  Future<RecyclerProfile?> loadRecyclerProfile();
+  Future<void> saveRecyclerProfile(RecyclerProfile profile);
   Future<void> clearProfile();
   Future<List<DigitalLot>> loadLots();
   Future<void> saveLots(List<DigitalLot> lots);
@@ -16,6 +18,7 @@ abstract interface class LocalRepository {
 
 class SharedPreferencesLocalRepository implements LocalRepository {
   static const profileKey = 'kwc_profile_v2';
+  static const recyclerProfileKey = 'kwc_recycler_profile_v2';
   static const lotsKey = 'kwc_lots_v2';
   static const lastSyncKey = 'kwc_last_sync_v2';
 
@@ -37,9 +40,27 @@ class SharedPreferencesLocalRepository implements LocalRepository {
   }
 
   @override
+  Future<RecyclerProfile?> loadRecyclerProfile() async {
+    final raw = (await SharedPreferences.getInstance()).getString(recyclerProfileKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return RecyclerProfile.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> saveRecyclerProfile(RecyclerProfile profile) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(recyclerProfileKey, jsonEncode(profile.toJson()));
+  }
+
+  @override
   Future<void> clearProfile() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(profileKey);
+    await prefs.remove(recyclerProfileKey);
   }
 
   @override

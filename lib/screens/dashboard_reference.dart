@@ -6,7 +6,8 @@ import 'package:flutter/services.dart';
 import '../data/ministry_data.dart';
 import '../ministry_controller.dart';
 import '../models/workflow_models.dart';
-import '../widgets/common.dart';
+import '../services/workflow_services.dart';
+import '../widgets/common.dart' hide LabelValue;
 import '../widgets/ministry_components.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -18,14 +19,22 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
+  UserRole? selectedRole;
+
   late final TextEditingController name;
   late final TextEditingController id;
   late final TextEditingController location;
+
+  late final TextEditingController facilityName;
+  late final TextEditingController facilityLocation;
+  late final TextEditingController authNumber;
+
   bool attempted = false;
   bool rejectedInput = false;
 
   bool get validNumber => RegExp(r'^\d{5,10}$').hasMatch(id.text);
   bool get validName => name.text.trim().length >= 2;
+  bool get validFacility => facilityName.text.trim().length >= 2 && authNumber.text.trim().isNotEmpty;
 
   void _showLanguageSelector() {
     final c = widget.controller;
@@ -75,6 +84,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     name = TextEditingController(text: profile?.collectorName ?? '');
     id = TextEditingController(text: profile?.collectorId ?? '');
     location = TextEditingController(text: profile?.operatingLocation ?? '');
+
+    final rProfile = widget.controller.recyclerProfile;
+    facilityName = TextEditingController(text: rProfile?.facilityName ?? '');
+    facilityLocation = TextEditingController(text: rProfile?.facilityLocation ?? '');
+    authNumber = TextEditingController(text: rProfile?.authorizationNumber ?? '');
   }
 
   @override
@@ -82,7 +96,160 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     name.dispose();
     id.dispose();
     location.dispose();
+    facilityName.dispose();
+    facilityLocation.dispose();
+    authNumber.dispose();
     super.dispose();
+  }
+
+  Widget _buildRolePicker(MinistryController c) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Who are you?', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 16),
+        _RoleCard(
+          title: 'Collector / Kabadiwala',
+          subtitle: 'Individual scrap collector',
+          icon: Icons.person_rounded,
+          onTap: () => setState(() => selectedRole = UserRole.collector),
+        ),
+        const SizedBox(height: 12),
+        _RoleCard(
+          title: 'Small Aggregator',
+          subtitle: 'Consolidate scrap from multiple collectors',
+          icon: Icons.store_rounded,
+          onTap: () => setState(() => selectedRole = UserRole.aggregator),
+        ),
+        const SizedBox(height: 12),
+        _RoleCard(
+          title: 'Authorized Recycler',
+          subtitle: 'Registered facility',
+          icon: Icons.factory_rounded,
+          onTap: () => setState(() => selectedRole = UserRole.recycler),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInformalForm(MinistryController c) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(c.t('onboardingTitle'), style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 6),
+        Text(c.t('onboardingSub')),
+        const SizedBox(height: 22),
+        TextField(
+          controller: name,
+          textCapitalization: TextCapitalization.words,
+          autofillHints: const [AutofillHints.name],
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: c.t('collectorName'),
+            prefixIcon: const Icon(Icons.person_outline_rounded),
+            errorText: attempted && !validName ? c.t('nameError') : null,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: id,
+          keyboardType: TextInputType.number,
+          maxLength: 10,
+          autofillHints: const [AutofillHints.telephoneNumber],
+          inputFormatters: [
+            StrictCollectorNumberFormatter(onRejected: () {
+              if (!rejectedInput && mounted) {
+                setState(() => rejectedInput = true);
+              }
+            }),
+          ],
+          onChanged: (_) => setState(() {
+            attempted = true;
+            rejectedInput = false;
+          }),
+          decoration: InputDecoration(
+              labelText: c.t('collectorId'),
+              prefixIcon: const Icon(Icons.phone_rounded),
+              errorText: (attempted || rejectedInput) && !validNumber
+                  ? c.t('phoneError')
+                  : null),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: location,
+          decoration: InputDecoration(
+              labelText: c.t('location'),
+              prefixIcon: const Icon(Icons.location_city_rounded)),
+        ),
+        if (c.lastError.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(c.lastError,
+              style: const TextStyle(color: danger, fontWeight: FontWeight.w700)),
+        ],
+        const SizedBox(height: 16),
+        PrimaryButton(
+          label: c.t('continue'),
+          icon: Icons.arrow_forward_rounded,
+          onPressed: validNumber && validName
+              ? () => c.saveProfile(id.text, location.text, selectedRole!, name.text)
+              : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRecyclerForm(MinistryController c) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Recycler Registration', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 6),
+        const Text('Enter authorized facility details.'),
+        const SizedBox(height: 22),
+        TextField(
+          controller: facilityName,
+          textCapitalization: TextCapitalization.words,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: 'Facility Name',
+            prefixIcon: const Icon(Icons.factory_rounded),
+            errorText: attempted && facilityName.text.isEmpty ? 'Required' : null,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: facilityLocation,
+          decoration: const InputDecoration(
+            labelText: 'Facility Location',
+            prefixIcon: Icon(Icons.location_city_rounded),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: authNumber,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: 'Authorization Number',
+            prefixIcon: const Icon(Icons.verified_user_rounded),
+            errorText: attempted && authNumber.text.isEmpty ? 'Required' : null,
+          ),
+        ),
+        if (c.lastError.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(c.lastError,
+              style: const TextStyle(color: danger, fontWeight: FontWeight.w700)),
+        ],
+        const SizedBox(height: 16),
+        PrimaryButton(
+          label: 'Register Facility',
+          icon: Icons.arrow_forward_rounded,
+          onPressed: validFacility
+              ? () => c.saveRecyclerProfile(facilityName.text, facilityLocation.text, authNumber.text, ['All'])
+              : null,
+        ),
+      ],
+    );
   }
 
   @override
@@ -126,68 +293,76 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           style:
               const TextStyle(color: textMuted, fontWeight: FontWeight.w700)),
       const SizedBox(height: 28),
-      Text(c.t('onboardingTitle'),
-          style: Theme.of(context).textTheme.headlineSmall),
-      const SizedBox(height: 6),
-      Text(c.t('onboardingSub')),
-      const SizedBox(height: 22),
-      TextField(
-        controller: name,
-        textCapitalization: TextCapitalization.words,
-        autofillHints: const [AutofillHints.name],
-        onChanged: (_) => setState(() {}),
-        decoration: InputDecoration(
-          labelText: c.t('collectorName'),
-          prefixIcon: const Icon(Icons.person_outline_rounded),
-          errorText: attempted && !validName ? c.t('nameError') : null,
+      if (selectedRole == null)
+        _buildRolePicker(c)
+      else if (selectedRole == UserRole.recycler)
+        _buildRecyclerForm(c)
+      else
+        _buildInformalForm(c),
+      
+      if (selectedRole != null) ...[
+        const SizedBox(height: 16),
+        TextButton(
+          onPressed: () => setState(() => selectedRole = null),
+          child: const Text('Back to Role Selection'),
         ),
-      ),
-      const SizedBox(height: 12),
-      TextField(
-        controller: id,
-        keyboardType: TextInputType.number,
-        maxLength: 10,
-        autofillHints: const [AutofillHints.telephoneNumber],
-        inputFormatters: [
-          StrictCollectorNumberFormatter(onRejected: () {
-            if (!rejectedInput && mounted) {
-              setState(() => rejectedInput = true);
-            }
-          }),
-        ],
-        onChanged: (_) => setState(() {
-          attempted = true;
-          rejectedInput = false;
-        }),
-        decoration: InputDecoration(
-            labelText: c.t('collectorId'),
-            prefixIcon: const Icon(Icons.phone_rounded),
-            errorText: (attempted || rejectedInput) && !validNumber
-                ? c.t('phoneError')
-                : null),
-      ),
-      const SizedBox(height: 12),
-      TextField(
-        controller: location,
-        decoration: InputDecoration(
-            labelText: c.t('location'),
-            prefixIcon: const Icon(Icons.location_city_rounded)),
-      ),
-      if (c.lastError.isNotEmpty) ...[
-        const SizedBox(height: 8),
-        Text(c.lastError,
-            style: const TextStyle(color: danger, fontWeight: FontWeight.w700)),
       ],
-      const SizedBox(height: 16),
-      PrimaryButton(
-        label: c.t('continue'),
-        icon: Icons.arrow_forward_rounded,
-        onPressed: validNumber && validName
-            ? () => c.saveProfile(id.text, location.text, name.text)
-            : null,
-      ),
       const SizedBox(height: 20),
     ]);
+  }
+}
+
+class _RoleCard extends StatelessWidget {
+  const _RoleCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          border: Border.all(color: border),
+          borderRadius: BorderRadius.circular(16),
+          color: Colors.white,
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: const BoxDecoration(
+                color: Color(0xFFEAF8ED),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: primaryDark, size: 28),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                  const SizedBox(height: 4),
+                  Text(subtitle, style: const TextStyle(color: textMuted, fontSize: 13)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: textMuted),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -335,12 +510,12 @@ class HomeDashboard extends StatelessWidget {
                     onTap: _openLedger,
                   ),
                   _QuickActionCard(
-                    label: controller.t('safety'),
-                    subtitle: _homeCopy(controller.language, 'workSafe'),
-                    icon: Icons.health_and_safety_rounded,
+                    label: 'Schemes',
+                    subtitle: 'EPR & Formalization',
+                    icon: Icons.account_balance_rounded,
                     iconBackground: const Color(0xFFFFEDE2),
                     iconColor: const Color(0xFFB65E20),
-                    onTap: () => controller.go(WorkflowScreen.safety),
+                    onTap: () => controller.go(WorkflowScreen.schemes),
                   ),
                   _QuickActionCard(
                     label: controller.t('sync'),
@@ -355,15 +530,7 @@ class HomeDashboard extends StatelessWidget {
                     count: controller.pendingSyncCount,
                     onTap: () => controller.go(WorkflowScreen.sync),
                   ),
-                  _QuickActionCard(
-                    label: controller.t('recycler'),
-                    subtitle: _homeCopy(controller.language, 'partnerTrack'),
-                    icon: Icons.factory_rounded,
-                    iconBackground: const Color(0xFFEDE6FF),
-                    iconColor: const Color(0xFF5B3B92),
-                    onTap: () =>
-                        controller.go(WorkflowScreen.recyclerDashboard),
-                  ),
+
                   _QuickActionCard(
                     label: controller.t('earnings'),
                     subtitle: _homeCopy(controller.language, 'incomeDetails'),
@@ -1108,4 +1275,99 @@ class SafetyScreenV2 extends StatelessWidget {
               ),
         ],
       );
+}
+
+class SchemesScreen extends StatelessWidget {
+  const SchemesScreen({required this.controller, super.key});
+  final MinistryController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      const PageHeading('Government & EPR Schemes', 'Access formal recycling initiatives, certification guidance, and available MSME support.'),
+      const SizedBox(height: 12),
+      const _SchemeCard(
+        title: 'EPR Registration (CPCB)',
+        authority: 'Central Pollution Control Board',
+        eligibility: 'Authorized Recyclers, Dismantlers, Refurbishers',
+        description: 'Mandatory registration under E-Waste (Management) Rules, 2022 to generate and trade EPR certificates.',
+        documents: 'Consent to Operate, GST, PAN, Factory License, Machinery Details',
+        actionLabel: 'View EPR Portal Guide',
+      ),
+      const SizedBox(height: 10),
+      const _SchemeCard(
+        title: 'MSME Sustainable (ZED) Certification',
+        authority: 'Ministry of MSME',
+        eligibility: 'All MSME units (Collectors & Aggregators acting as micro-enterprises)',
+        description: 'Financial assistance and certification for adopting Zero Defect Zero Effect (ZED) practices.',
+        documents: 'Udyam Registration, Aadhaar, Bank Details',
+        actionLabel: 'Apply for ZED',
+      ),
+      const SizedBox(height: 10),
+      const _SchemeCard(
+        title: 'Informal Sector Formalization Grant',
+        authority: 'State Pollution Control Board',
+        eligibility: 'Individual Kabadiwalas & Scrap Aggregators',
+        description: 'Provides safety gear, formal identity cards, and micro-loans to transition into the formal ecosystem.',
+        documents: 'Aadhaar, Municipal Permit, Bank Account',
+        actionLabel: 'Check State Eligibility',
+      ),
+    ]);
+  }
+}
+
+class _SchemeCard extends StatelessWidget {
+  const _SchemeCard({
+    required this.title,
+    required this.authority,
+    required this.eligibility,
+    required this.description,
+    required this.documents,
+    required this.actionLabel,
+  });
+
+  final String title;
+  final String authority;
+  final String eligibility;
+  final String description;
+  final String documents;
+  final String actionLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.account_balance_rounded, color: primary),
+                const SizedBox(width: 8),
+                Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16))),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(authority, style: const TextStyle(color: primary, fontWeight: FontWeight.w700, fontSize: 12)),
+            const Divider(),
+            LabelValue('Eligibility', eligibility),
+            LabelValue('About', description),
+            LabelValue('Required Documents', documents),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: PrimaryButton(
+                label: actionLabel,
+                icon: Icons.open_in_new_rounded,
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('This would open the official scheme portal or application form.')));
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

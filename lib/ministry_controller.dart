@@ -30,6 +30,11 @@ enum WorkflowScreen {
   ledger,
   sync,
   recyclerDashboard,
+  makeOffer,
+  schemes,
+  aggregateLots,
+  unitEconomics,
+  scanQR,
 }
 
 class MinistryController extends ChangeNotifier {
@@ -68,6 +73,9 @@ class MinistryController extends ChangeNotifier {
 
   WorkflowScreen screen = WorkflowScreen.onboarding;
   CollectorProfile? profile;
+  RecyclerProfile? recyclerProfile;
+  UserRole get userRole => profile?.role ?? UserRole.collector;
+  
   String language = 'mr';
   bool loading = true;
   bool online;
@@ -153,11 +161,16 @@ class MinistryController extends ChangeNotifier {
 
   Future<void> load() async {
     profile = await local.loadProfile();
+    recyclerProfile = await local.loadRecyclerProfile();
     if (profile != null) {
       language = profile!.language;
-      screen = profile!.collectorName.trim().isEmpty
-          ? WorkflowScreen.onboarding
-          : WorkflowScreen.home;
+      if (profile!.role == UserRole.recycler && recyclerProfile == null) {
+        screen = WorkflowScreen.onboarding;
+      } else if (profile!.role != UserRole.recycler && profile!.collectorName.trim().isEmpty) {
+        screen = WorkflowScreen.onboarding;
+      } else {
+        screen = WorkflowScreen.home;
+      }
     }
     lots
       ..clear()
@@ -213,6 +226,7 @@ class MinistryController extends ChangeNotifier {
   Future<void> logout() async {
     await local.clearProfile();
     profile = null;
+    recyclerProfile = null;
     _history.clear();
     screen = WorkflowScreen.onboarding;
     lastError = '';
@@ -227,6 +241,7 @@ class MinistryController extends ChangeNotifier {
         collectorName: profile!.collectorName,
         language: value,
         operatingLocation: profile!.operatingLocation,
+        role: profile!.role,
       );
       local.saveProfile(profile!);
     }
@@ -250,7 +265,8 @@ class MinistryController extends ChangeNotifier {
 
   Future<void> saveProfile(
     String collectorId,
-    String operatingLocation, [
+    String operatingLocation,
+    UserRole role, [
     String collectorName = '',
   ]) async {
     final mobile = collectorId.trim();
@@ -266,10 +282,44 @@ class MinistryController extends ChangeNotifier {
       operatingLocation: operatingLocation.trim().isEmpty
           ? 'Location not provided'
           : operatingLocation.trim(),
+      role: role,
     );
     await local.saveProfile(profile!);
     lastError = '';
     screen = WorkflowScreen.home;
+    _history.clear();
+    notifyListeners();
+  }
+
+  Future<void> saveRecyclerProfile(
+    String facilityName,
+    String facilityLocation,
+    String authorizationNumber,
+    List<String> materialsAccepted,
+  ) async {
+    if (facilityName.trim().isEmpty || authorizationNumber.trim().isEmpty) {
+      lastError = 'Facility Name and Authorization Number are required.';
+      notifyListeners();
+      return;
+    }
+    recyclerProfile = RecyclerProfile(
+      recyclerId: 'REC-${DateTime.now().millisecondsSinceEpoch}',
+      facilityName: facilityName.trim(),
+      facilityLocation: facilityLocation.trim(),
+      authorizationNumber: authorizationNumber.trim(),
+      materialsAccepted: materialsAccepted,
+    );
+    profile = CollectorProfile(
+      collectorId: recyclerProfile!.recyclerId,
+      collectorName: recyclerProfile!.facilityName,
+      language: language,
+      operatingLocation: recyclerProfile!.facilityLocation,
+      role: UserRole.recycler,
+    );
+    await local.saveRecyclerProfile(recyclerProfile!);
+    await local.saveProfile(profile!);
+    lastError = '';
+    screen = WorkflowScreen.recyclerDashboard;
     _history.clear();
     notifyListeners();
   }
@@ -662,6 +712,20 @@ class MinistryController extends ChangeNotifier {
         materials: target.materials, location: target.collectionLocation);
   }
 
+  void handleScannedLotId(String scannedId) {
+    // Attempt to find the lot locally
+    try {
+      final lot = lots.firstWhere((l) => l.lotId == scannedId);
+      selectedLotId = lot.lotId;
+      notifyListeners();
+      go(WorkflowScreen.lotDetail); // Go to verification screen
+    } catch (_) {
+      // Not found locally. If online, we would fetch from backend here.
+      lastError = 'Lot $scannedId not found locally. Ensure it is synced.';
+      notifyListeners();
+    }
+  }
+
   Future<void> chooseRecycler(RecyclerRecord recycler,
       {bool pickupRequested = false}) async {
     final lot = selectedLot;
@@ -793,11 +857,153 @@ class MinistryController extends ChangeNotifier {
     go(target);
   }
 
+  Future<void> submitOffer(double offeredRate, double distanceKm, bool pickupAvailable) async {
+    final lot = selectedLot;
+    if (lot == null) return;
+    
+    final recycler = demoRecyclers.first; // Mocking current recycler
+    final offer = RecyclerOffer(
+      recyclerId: recycler.recyclerId,
+      recyclerName: recycler.name,
+      offeredRate: offeredRate,
+      distanceKm: distanceKm,
+      pickupAvailable: pickupAvailable,
+      authorizationStatus: recycler.authorizationStatus,
+    );
+
+    final updated = lot.copyWith(
+      offers: [...lot.offers, offer],
+      syncState: SyncState.pending,
+    );
+    await _replaceLot(updated);
+    go(WorkflowScreen.recyclerDashboard);
+  }
+
+  Future<void> acceptOffer(RecyclerOffer offer, bool pickupRequested) async {
+    final lot = selectedLot;
+    if (lot == null) return;
+
+    final agreement = DigitalAgreement(
+      lotId: lot.lotId,
+      recyclerId: offer.recyclerId,
+      agreedRate: offer.offeredRate,
+      paymentMethod: PaymentMethod.cash,
+      handoverMethod: pickupRequested ? 'Pickup' : 'Drop-off',
+      lockedAt: DateTime.now(),
+      recyclerAccepted: true,
+      collectorAccepted: true,
+    );
+
+    final updated = lot.copyWith(
+      selectedRecyclerId: offer.recyclerId,
+      selectedRecyclerName: offer.recyclerName,
+      agreement: agreement,
+      agreedPrice: offer.offeredRate,
+      status: pickupRequested ? LotStatus.pickupRequested : LotStatus.recyclerSelected,
+      syncState: SyncState.pending,
+      statusHistory: [
+        ...lot.statusHistory,
+        StatusEvent(
+          status: pickupRequested ? LotStatus.pickupRequested : LotStatus.recyclerSelected,
+          at: DateTime.now(),
+        ),
+      ],
+    );
+    await _replaceLot(updated);
+    go(WorkflowScreen.handover);
+  }
+
+  Future<void> aggregateLots(List<String> sourceLotIds) async {
+    final sourceLots = lots.where((l) => sourceLotIds.contains(l.lotId)).toList();
+    if (sourceLots.isEmpty) return;
+    
+    // Combine materials
+    final materialMap = <String, double>{};
+    final materialQuantities = <String, int>{};
+    for (final lot in sourceLots) {
+      for (final item in lot.materials) {
+        materialMap[item.materialId] = (materialMap[item.materialId] ?? 0) + item.weightKg;
+        materialQuantities[item.materialId] = (materialQuantities[item.materialId] ?? 0) + item.quantity;
+      }
+    }
+    
+    final combinedMaterials = materialMap.entries.map((e) => LotMaterial(
+      materialId: e.key,
+      quantity: materialQuantities[e.key] ?? 1,
+      weightKg: e.value,
+      condition: 'mixed',
+      sourceType: 'aggregated',
+      confidence: 1.0,
+      imageIds: const [],
+      estimatedValue: 0.0,
+      quotedRate: 0.0,
+    )).toList();
+    
+    final newLot = DigitalLot(
+      lotId: 'LOT-${DateTime.now().millisecondsSinceEpoch}',
+      collectorId: sourceLots.first.collectorId,
+      collectionLocation: sourceLots.first.collectionLocation,
+      materials: combinedMaterials,
+      status: LotStatus.sorted, // Status for aggregated lots
+      sourceLotIds: sourceLotIds,
+      handoverReference: 'CONSOLIDATED',
+      createdAt: DateTime.now(),
+      imageBase64: const [],
+      handoverImageBase64: null,
+      handoverLocation: const LocationRecord(latitude: 0, longitude: 0, label: 'Pending'),
+      paymentMethod: PaymentMethod.cash,
+      paymentStatus: PaymentStatus.pending,
+      syncState: SyncState.pending,
+      selectedRecyclerId: '',
+      selectedRecyclerName: '',
+      totalEstimatedValue: 0.0,
+      finalWeightKg: 0.0,
+      finalSaleValue: null,
+      recyclerConfirmed: false,
+      statusHistory: [StatusEvent(status: LotStatus.sorted, at: DateTime.now())],
+    );
+    
+    lots.add(newLot);
+    
+    // Mark source lots as completed or processed
+    for (var lot in sourceLots) {
+      final updated = lot.copyWith(
+        statusHistory: [...lot.statusHistory, StatusEvent(status: LotStatus.processed, at: DateTime.now())],
+      );
+      final index = lots.indexWhere((l) => l.lotId == lot.lotId);
+      if (index >= 0) lots[index] = updated;
+    }
+    
+    await _persistLots();
+    selectedLotId = newLot.lotId;
+    go(WorkflowScreen.recyclerMatch);
+  }
+
+  Future<void> processLot(String lotId) async {
+    final lot = lots.firstWhere((l) => l.lotId == lotId);
+    if (lot.status == LotStatus.processed) return;
+    
+    final updated = lot.copyWith(
+      statusHistory: [...lot.statusHistory, StatusEvent(status: LotStatus.processed, at: DateTime.now())],
+    );
+    await _replaceLot(updated);
+    go(WorkflowScreen.recyclerDashboard);
+  }
+
   void setOnline(bool value) {
     if (online == value) return;
     online = value;
     notifyListeners();
     if (online && pendingSyncCount > 0) unawaited(syncNow());
+  }
+
+  Future<void> resetDemo() async {
+    lots.clear();
+    await _persistLots();
+    selectedLotId = '';
+    online = false;
+    notifyListeners();
+    go(WorkflowScreen.home);
   }
 
   Future<void> syncNow() async {
